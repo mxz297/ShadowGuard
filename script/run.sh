@@ -4,6 +4,6 @@ bench=$*
 
 root=$LITECFI_HOME
 
-dyninst_lib=$root/thirdparty/dyninst-10.1.0/install/lib
+dyninst_lib=$root/thirdparty/dyninst/install/lib
 
-LD_PRELOAD=$root/bazel-bin/src/libstackrt.so:$root/thirdparty/dyninst-10.1.0/install/lib/libdyninstAPI_RT.so $bench
+LD_PRELOAD=$root/bazel-bin/src/libstackrt.so:$root/thirdparty/dyninst/install/lib/libdyninstAPI_RT.so $bench

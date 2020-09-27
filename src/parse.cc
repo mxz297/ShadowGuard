@@ -5,6 +5,9 @@ BPatch bpatch;
 
 litecfi::Parser* InitParser(std::string binary, bool libs, bool sanitize) {
   BPatch* parser = &bpatch;
+  bpatch.setRelocateJumpTable(true);
+  bpatch.setRelocateFunctionPointer(true);
+
   // Open binary and its linked shared libraries for parsing
   BPatch_addressSpace* app;
   if (sanitize) {

@@ -4,7 +4,7 @@ bench=$1
 
 root=$LITECFI_HOME
 
-dyninst_lib=$root/thirdparty/dyninst-10.1.0/install/lib
+dyninst_lib=$root/thirdparty/dyninst/install/lib
 
 cp $bench $bench.orig
 

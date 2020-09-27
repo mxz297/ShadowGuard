@@ -49,16 +49,16 @@ deps () {
   cd $root_dir
 
   # Fetch
-  if [ ! -d "thirdparty/dyninst-10.1.0" ]; then
-    git clone https://github.com/mxz297/dyninst.git thirdparty/dyninst-10.1.0
-    cd thirdparty/dyninst-10.1.0/;\
-    git checkout liteCFI
+  if [ ! -d "thirdparty/dyninst" ]; then
+    git clone https://github.com/mxz297/dyninst.git thirdparty/dyninst
+    cd thirdparty/dyninst/;\
+    git checkout layout_opt
   fi
 
   cd $root_dir
 
-  if [ ! -d "thirdparty/dyninst-10.1.0/install" ]; then
-    cd thirdparty/dyninst-10.1.0/;\
+  if [ ! -d "thirdparty/dyninst/install" ]; then
+    cd thirdparty/dyninst/;\
     mkdir install;\
     mkdir -p build;\
     cd build
@@ -127,7 +127,7 @@ build () {
 
 run_tests() {
   cd tests; bazel clean; bazel test -c dbg //tests:*
-  cd ..;LD_LIBRARY_PATH=`pwd`/thirdparty/dyninst-10.1.0/install/lib/:$LD_LIBRARY_PATH ./bazel-bin/tests/analysis_test
+  cd ..;LD_LIBRARY_PATH=`pwd`/thirdparty/dyninst/install/lib/:$LD_LIBRARY_PATH ./bazel-bin/tests/analysis_test
 }
 
 clean () {
@@ -136,7 +136,7 @@ clean () {
 
 realclean () {
   rm -rf thirdparty/asmjit
-  rm -rf thirdparty/dyninst-10.1.0
+  rm -rf thirdparty/dyninst
   bazel clean
 }
 
