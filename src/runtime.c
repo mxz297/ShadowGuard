@@ -37,6 +37,9 @@ static const long long __stack_sz = 8 * 1024 * 1024;  // 8 MB
 //           ---------
 CONSTRUCTOR(0) static void __shadow_guard_init_stack() {
   unsigned long addr = (unsigned long)malloc(__stack_sz);
+  if (getenv("SHADOWGUARD_PRINT_STACK_LOC")) {
+      fprintf(stderr, "shadow region %lx\n", addr);
+  }
   if (syscall(SYS_arch_prctl, ARCH_SET_GS, addr) < 0)
     abort();
   addr += 8;

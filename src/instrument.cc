@@ -701,6 +701,7 @@ void InstrumentFunction(BPatch_function* function,
                         const litecfi::Parser& parser, PatchMgr::Ptr patcher,
                         const std::map<uint64_t, FuncSummary*>& analyses,
                         InstrumentationResult* res) {
+  function->setLayoutOrder((uint64_t)(function->getBaseAddr()));
   total_func++;
   std::string fn_name = Dyninst::PatchAPI::convert(function)->name();
   StdOut(Color::YELLOW, FLAGS_vv) << "     Function : " << fn_name << Endl;
