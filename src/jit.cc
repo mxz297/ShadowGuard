@@ -485,3 +485,45 @@ std::string JitRegisterPop(Dyninst::PatchAPI::Point* pt, FuncSummary* s,
   a->mov(reg, scratch);
   return "";
 }
+
+std::string JitCallEmulatePush(Dyninst::PatchAPI::Point* pt, FuncSummary* s,
+                               AssemblerHolder& ah, int height, bool useOriginalCodeFixed) {
+  if (FLAGS_dry_run == "empty") return "";
+  Assembler* a = ah.GetAssembler();
+  TempRegisters t;
+  MoveInstData* mid = nullptr;
+  if (useOriginalCodeFixed) {
+      Address blockEntry = pt->edge()->trg()->start();
+      mid = s->getMoveInstDataFixedAtEntry(blockEntry);
+  }    
+  if (mid != nullptr && mid->saveCount > 0) {
+    a->lea(kRegisterMap[mid->reg1], ptr(rip));
+    t = UseSpecifiedRegisters(a, mid, height);
+  } else {
+    assert(!"save a GPR to shadow region");
+    std::set<std::string> dead;
+    t = SaveTempRegisters(a, dead);
+  }
+
+  Gp sp_reg = t.tmp1;
+  Gp ra_reg = t.tmp2;
+
+  asmjit::x86::Mem shadow_ptr;
+  shadow_ptr.setSize(8);
+  shadow_ptr.setSegment(gs);
+  shadow_ptr = shadow_ptr.cloneAdjusted(0);
+  if (FLAGS_dry_run != "only-save") {
+    if (FLAGS_validate_frame) {
+      SaveRaAndFrame(shadow_ptr, sp_reg, ra_reg, t, a);
+    } else {
+      SaveRa(shadow_ptr, sp_reg, ra_reg, t, a);
+    }
+  }
+
+  RestoreTempRegisters(a, t);
+
+  return "";
+}
+
+
+                            

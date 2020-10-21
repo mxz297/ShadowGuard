@@ -19,6 +19,10 @@ cc_binary(
 	"register_utils.h",
 	"utils.cc",
 	"utils.h",
+    "snippet.h",
+    "snippet.cc",
+    "cfp_inline.cc",
+    "safe_path_elision.cc"
     ],
     deps = [
        	"@asmjit//:asmjit",
