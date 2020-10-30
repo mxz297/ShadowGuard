@@ -67,6 +67,24 @@ static bool IdentifyInlinedPath(
     PriorityQueueItem item = q.top();
     q.pop();
     if (item.pathLen != s[item.b].curPathLen) continue;
+    bool modifySP = false;
+    ParseAPI::Block::Insns insns;
+    item.b->getInsns(insns);
+    for (auto iit : insns) {
+      InstructionAPI::Instruction &i = iit.second;
+      if (i.getCategory() == InstructionAPI::c_ReturnInsn) continue;
+      std::set<InstructionAPI::RegisterAST::Ptr> regs;
+      i.getWriteSet(regs);
+      for (auto r : regs) {
+        if (r->getID().getBaseRegister() == x86_64::rsp) {
+          modifySP = true;
+          break;
+        }
+      }
+      if (modifySP) break;
+    }
+    if (modifySP) continue;
+
     bool isRetBlock = false;
     bool isCallBlock = false;
     bool hasIndirectJump = false;
@@ -116,6 +134,15 @@ static bool IdentifyInlinedPath(
   }
   inlinedBlocks.emplace_back(f->entry());
   std::reverse(std::begin(inlinedBlocks), std::end(inlinedBlocks));
+
+  // Get rid of the ret instruction and possibly the return block
+  // if it has one return instruction
+  PatchBlock* retBlock = inlinedBlocks.back();
+  if (retBlock->end() - retBlock->start() > 1) {
+    assert(PatchModifier::split(retBlock, retBlock->last(), true, retBlock->last()));
+  } else {
+    inlinedBlocks.pop_back();
+  }
   return true;
 }
 
@@ -128,6 +155,29 @@ static PatchFunction* GetFuncContainingBlock(
   return funcs[0];
 }
 
+static PatchEdge* findRedirectEdge(
+  int i,
+  std::vector<PatchBlock*> &inlinedBlocks,
+  std::map<PatchBlock*, PatchBlock*> &cloneBlockMap
+) {
+  if (i < inlinedBlocks.size() - 1) {
+    for (auto e : cloneBlockMap[inlinedBlocks[i]]->targets()) {
+      if (e->trg() == inlinedBlocks[i+1]) {
+        return e;
+      }
+    }
+  } else {
+    for (auto e: cloneBlockMap[inlinedBlocks[i]]->targets()) {
+      PatchBlock* trgB = e->trg();
+      if (trgB->end() - trgB->start() > 1) continue;
+      InstructionAPI::Instruction i = trgB->getInsn(trgB->start());
+      if (i.getCategory() != InstructionAPI::c_ReturnInsn) continue;
+      return e;
+    }
+  }
+  return nullptr;
+}
+
 static void InlineBlocks(
   PatchBlock* callsite,
   PatchBlock* callft_block,
@@ -136,38 +186,47 @@ static void InlineBlocks(
 ) {
   assert(callft_block != nullptr);
 
-  // Split the call site to get rid of the call instruction
-  assert(PatchModifier::split(callsite, callsite->last(), true, callsite->last()));
+  if (callsite->end() - callsite->start() <= 5) {
+    // The call site block contains only the call instruction.
+    // So, we need to redirect its source edges
 
-  // Redirect the callsite edge to the inlined entry  
-  PatchEdge * start_inline_edge = nullptr;
-  for (auto e : callsite->targets()) {
-    if (e->type() == ParseAPI::FALLTHROUGH) start_inline_edge = e;
+    // We first copy edge pointers because PatchModifer::redirect
+    // may change the PatchBlock's source edge list
+    std::vector<PatchEdge*> edges;
+    for (auto e : callsite->sources()) {
+      if (e->type() == ParseAPI::RET || e->type() == ParseAPI::CATCH) continue;
+      edges.emplace_back(e);
+    }
+    for (auto e: edges) {      
+      assert(PatchModifier::redirect(e, cloneBlockMap[inlinedBlocks[0]]));
+    }
+  } else {
+    // Split the call site to get rid of the call instruction
+    assert(PatchModifier::split(callsite, callsite->last(), true, callsite->last()));
+    // Redirect the callsite edge to the inlined entry
+    PatchEdge * start_inline_edge = nullptr;
+    for (auto e : callsite->targets()) {
+      if (e->type() == ParseAPI::FALLTHROUGH) start_inline_edge = e;
+    }
+    assert(start_inline_edge != nullptr);
+    assert(PatchModifier::redirect(start_inline_edge, cloneBlockMap[inlinedBlocks[0]]));
   }
-  assert(start_inline_edge != nullptr);
-  assert(PatchModifier::redirect(start_inline_edge, cloneBlockMap[inlinedBlocks[0]]));
 
   // Chain the inlined function blocks
-  for (size_t i = 0; i < inlinedBlocks.size() - 1; ++i) {    
-    PatchEdge* edge_to_redirect = nullptr;
-    for (auto e : cloneBlockMap[inlinedBlocks[i]]->targets()) {
-      if (e->trg() == inlinedBlocks[i+1]) {
-        edge_to_redirect = e;
-        break;
-      }
-    }
+  for (size_t i = 0; i < inlinedBlocks.size(); ++i) {
+    PatchEdge* edge_to_redirect = findRedirectEdge(i, inlinedBlocks, cloneBlockMap);
     assert(edge_to_redirect != nullptr);
-    if (i == inlinedBlocks.size() - 2) {
+    if (i == inlinedBlocks.size() - 1) {
       // The original source block goes to a return block.
-      // After inlining, this block goes to the call fall-through block
+      // After inlining, this block goes to the call fall-through block      
       assert(PatchModifier::redirect(edge_to_redirect, callft_block));
-    } else {
+    } else {      
       assert(PatchModifier::redirect(edge_to_redirect, cloneBlockMap[inlinedBlocks[i+1]]));
-    }    
+    }
   }
 }
 
-static void InstrumentNonInlinedEdges(  
+static void InstrumentNonInlinedEdges(
   std::vector<PatchBlock*> &inlinedBlocks,
   std::map<PatchBlock*, PatchBlock*> &cloneBlockMap,
   FuncSummary* summary,
@@ -175,9 +234,17 @@ static void InstrumentNonInlinedEdges(
   PatchBlock* callft_block,
   PatchFunction* f
 ) {
+  std::set<PatchBlock*> inlinedBlockSet;
+  inlinedBlockSet.insert(callft_block);
+  for (auto it : cloneBlockMap) {
+    inlinedBlockSet.insert(it.second);    
+  }
   for (auto b : inlinedBlocks) {
-    for (auto e: b->targets()) {      
-      if (cloneBlockMap.find(e->trg()) != cloneBlockMap.end()) continue;
+    PatchBlock * cloneB = cloneBlockMap[b];    
+    for (auto e: cloneB->targets()) {
+      if (e->type() == ParseAPI::RET) continue;
+      if (inlinedBlockSet.find(e->trg()) != inlinedBlockSet.end()) continue;      
+      e->setExplicitInter();
       assert(summary->blockEndSPHeight.find(e->src()->start()) !=
             summary->blockEndSPHeight.end());
       int height = summary->blockEndSPHeight[e->src()->start()];
@@ -195,18 +262,48 @@ static void InstrumentNonInlinedEdges(
             new CallEmulatePushSnippet(summary, height, true, callft_block));
       }
 
-      Point* p = patcher->findPoint(PatchAPI::Location::EdgeInstance(f, e),
-                                    Point::EdgeDuring);
+      // This edge will cross function boudnary and it is
+      // not a function call. Dyninst assumes that EdgeDuring location
+      // is within the function. Here, we set location to be trusted
+      // to work around this intra-procedural assumption.
+      PatchAPI::Location loc = PatchAPI::Location::EdgeInstance(f, e);
+      loc.trusted = true;
+      Point* p = patcher->findPoint(loc, Point::EdgeDuring);
       assert(p);
       p->pushBack(stack_push);
     }
   }
 }
 
-bool ControlFlowPathInlining(BPatch_function* function, FuncSummary* summary,
+static bool FilterCallBlock(PatchBlock* b) {
+  // If the call site block has only a call instructon,
+  // and it is a target of a jump table, then the current
+  // implementation cannot correctly handle jump table relocation.
+  // Ignore this case.
+  bool hasInd = false;
+  for (auto e : b->sources()) {
+    if (e->type() == ParseAPI::INDIRECT) {
+      hasInd = true;
+      break;
+    }
+  }
+  ParseAPI::Block::Insns insns;
+  b->getInsns(insns);
+  if (hasInd && insns.size() == 1) return true;
+  return false;
+}
+
+bool ControlFlowPathInlining(BPatch_function* function, const std::map<uint64_t, FuncSummary*>& analyses,
                              const litecfi::Parser& parser,
-                             PatchMgr::Ptr patcher) {
+                             PatchMgr::Ptr patcher,
+                             std::set<Address>& funcAddrs) {  
   PatchFunction* f = PatchAPI::convert(function);
+  static int count = 0;
+  FuncSummary* summary = nullptr;
+  auto it = analyses.find(static_cast<uint64_t>(
+      reinterpret_cast<uintptr_t>(f->addr())));
+  if (it != analyses.end())
+    summary = (*it).second;
 
   // 1. Identify a path to inline.
   vector<PatchBlock*> inlinedBlocks;
@@ -214,11 +311,43 @@ bool ControlFlowPathInlining(BPatch_function* function, FuncSummary* summary,
     return false;
   }
 
+  StdOut(Color::WHITE, FLAGS_vv)
+    << "Inline control flow path for " << f->name() << " at "
+    << std::hex << (uint64_t)function->getBaseAddr() << Endl;
+
   // 2. Iterate every callsite of this function
   for (auto e: f->entry()->sources()) {
     if (e->type() != ParseAPI::CALL) continue;
+    if (FilterCallBlock(e->src())) continue;
     PatchFunction * caller = GetFuncContainingBlock(e->src());
     if (caller == nullptr) continue;
+    // Do not inline recursive call
+    if (f == caller) continue;
+    Address callerAddr = (Address)(caller->addr());
+
+    // If the caller has been optimized, do not inline.  
+    if (funcAddrs.find(callerAddr) == funcAddrs.end()) continue;
+    // If the call site block contains only a call instruction,
+    // we need to redirect its source edges.
+    // But, then if one of the source edges is INDIRECT, we cannot inline
+    // this call site.
+    if (e->src()->end() - e->src()->start() <= 5) {
+      // TODO: Fix this case
+      continue;    
+      bool hasInd = false;
+      for (auto se : e->src()->sources()) {
+        if (se->type() == ParseAPI::INDIRECT) hasInd = true;
+      }
+      if (hasInd) continue;
+    }
+    
+    //count++;
+    //if (count > 3) continue;    
+
+    // Now we can inline the function call
+    StdOut(Color::WHITE, FLAGS_vv)
+      << "\tcall site in " << caller->name() << " at "
+      << std::hex << e->src()->last() << Endl;
 
     PatchBlock* call_ft_block = nullptr;
     for (auto te : e->src()->targets()) {
@@ -241,6 +370,7 @@ bool ControlFlowPathInlining(BPatch_function* function, FuncSummary* summary,
 
     // 2.3. Insert shadow stack push to edges
     InstrumentNonInlinedEdges(inlinedBlocks, cloneBlockMap, summary, patcher, call_ft_block, caller);
-  }
+  }  
+  return true;
 }
 

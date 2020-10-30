@@ -498,9 +498,17 @@ std::string JitCallEmulatePush(Dyninst::PatchAPI::Point* pt, FuncSummary* s,
   }    
   if (mid != nullptr && mid->saveCount > 0) {
     a->lea(kRegisterMap[mid->reg1], ptr(rip));
+    a->push(kRegisterMap[mid->reg1]);
     t = UseSpecifiedRegisters(a, mid, height);
   } else {
-    assert(!"save a GPR to shadow region");
+    asmjit::x86::Mem scratch;
+    scratch.setSize(8);
+    scratch.setSegment(gs);
+    scratch = scratch.cloneAdjusted(8);    
+    a->mov(scratch, rax);
+    a->lea(rax, ptr(rip));
+    a->push(rax);
+    a->mov(rax, scratch);
     std::set<std::string> dead;
     t = SaveTempRegisters(a, dead);
   }

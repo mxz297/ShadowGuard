@@ -21,7 +21,7 @@ bool StackOpSnippet::generate(Dyninst::PatchAPI::Point* pt, Dyninst::Buffer& buf
     return true;    
 }
 
-bool CallEmulatePushSnippet::generate(Dyninst::PatchAPI::Point* pt, Dyninst::Buffer& buf) {
+bool CallEmulatePushSnippet::generate(Dyninst::PatchAPI::Point* pt, Dyninst::Buffer& buf) {    
     AssemblerHolder ah;
     jit_fn_(pt, summary_, ah, height, useOriginalCodeFixed);
 
@@ -34,9 +34,14 @@ bool CallEmulatePushSnippet::generate(Dyninst::PatchAPI::Point* pt, Dyninst::Buf
     ah.GetCode()->copyFlattenedData(temp_buf, size,
                                     asmjit::CodeHolder::kCopyWithPadding);
 
-    Dyninst::InstructionAPI::InstructionDecoder decoder(temp_buf, 15, Dyninst::Arch_x86_64);
-    Dyninst::InstructionAPI::Instruction i = decoder.decode();
-    Dyninst::PatchAPI::PatchLabel::generateALabel(b, buf.curAddr() + i.size() - 4);                                    
+    Dyninst::InstructionAPI::InstructionDecoder decoder(temp_buf, size, Dyninst::Arch_x86_64);
+    size_t offset = 0;
+    while (offset < size) {
+        Dyninst::InstructionAPI::Instruction i = decoder.decode();
+        offset += i.size();
+        if (i.getOperation().getID() == e_lea) break;        
+    }    
+    Dyninst::PatchAPI::PatchLabel::generateALabel(b, buf.curAddr() + offset - 4);                                    
 
     buf.copy(temp_buf, size);
     return true;    

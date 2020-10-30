@@ -60,9 +60,10 @@ bool CheckFastPathFunction(BPatch_basicBlock*& entry,
 
 // Implemented in cfp_inline.cc
 extern
-bool ControlFlowPathInlining(BPatch_function* function, FuncSummary* summary,
+bool ControlFlowPathInlining(BPatch_function* function, const std::map<uint64_t, FuncSummary*>&,
                              const litecfi::Parser& parser,
-                             PatchMgr::Ptr patcher);
+                             PatchMgr::Ptr patcher,
+                             std::set<Address>&);
 
 // Thread local shadow stack initialization function name.
 static constexpr char kShadowStackInitFn[] = "litecfi_init_mem_region";
@@ -276,7 +277,7 @@ void CountMemoryWrites(FuncSummary* s) {
   }
 }
 
-void InstrumentFunction(BPatch_function* function,
+bool InstrumentFunction(BPatch_function* function,
                         const litecfi::Parser& parser, PatchMgr::Ptr patcher,
                         const std::map<uint64_t, FuncSummary*>& analyses,
                         InstrumentationResult* res) {
@@ -310,7 +311,7 @@ void InstrumentFunction(BPatch_function* function,
     if (Skippable(function, summary)) {
       function->relocateFunction();
       res->safe_fns.push_back(fn_name);
-      return;
+      return true;
     }
 
     // Add inlining hint so that writeFile may inline small leaf functions.
@@ -324,14 +325,14 @@ void InstrumentFunction(BPatch_function* function,
           << "      Optimized instrumentation lowering for function at 0x"
           << std::hex << (uint64_t)function->getBaseAddr() << Endl;
 
-      return;
+      return true;
     }
 
     // For leaf functions we may be able to carry out stack operations using
     // unused registers.
     if (DoStackOpsUsingRegisters(function, summary, parser, patcher)) {
       res->reg_stack_fns.push_back(fn_name);
-      return;
+      return true;
     }
 
     // Apply fast path optimization if applicable.
@@ -388,7 +389,7 @@ void InstrumentFunction(BPatch_function* function,
                                  BPatch_lastSnippet, &is_empty);
       binary_edit->insertSnippet(nopSnippet, points, BPatch_callAfter,
                                  BPatch_lastSnippet, &is_empty);
-      return;
+      return true;
     } else {
       // Attempt to move instrumentation to utilize
       // existing push & pop
@@ -426,9 +427,7 @@ void InstrumentFunction(BPatch_function* function,
                                  BPatch_lastSnippet, &is_empty);
       binary_edit->insertSnippet(nopSnippet, afterPoints, BPatch_callAfter,
                                  BPatch_lastSnippet, &is_empty);
-      if (ControlFlowPathInlining(function, summary, parser, patcher)) {
-      }
-      return;
+      return false;
     }
   }
 
@@ -451,6 +450,7 @@ void InstrumentFunction(BPatch_function* function,
   function->getExitPoints(points);
   binary_edit->insertSnippet(nopSnippet, points, BPatch_callAfter,
                              BPatch_lastSnippet, &is_empty);
+  return false;
 }
 
 BPatch_function* FindFunctionByName(BPatch_image* image, std::string name) {
@@ -484,9 +484,9 @@ void InstrumentInitFunction(BPatch_function* function,
 void InstrumentModule(BPatch_module* module, const litecfi::Parser& parser,
                       PatchMgr::Ptr patcher,
                       const std::map<uint64_t, FuncSummary*>& analyses,
-                      InstrumentationResult* res) {
+                      InstrumentationResult* res,
+                      std::vector<BPatch_function*>& attemptCFPIFuncs) {
   std::vector<BPatch_function*>* functions = module->getProcedures();
-
   for (auto it = functions->begin(); it != functions->end(); it++) {
     BPatch_function* function = *it;
 
@@ -503,7 +503,9 @@ void InstrumentModule(BPatch_module* module, const litecfi::Parser& parser,
     if (symR->getRegionName() != ".text")
       continue;
 
-    InstrumentFunction(function, parser, patcher, analyses, res);
+    if (!InstrumentFunction(function, parser, patcher, analyses, res)) {
+      attemptCFPIFuncs.emplace_back(function);
+    }
   }
 }
 
@@ -550,12 +552,30 @@ void InstrumentCodeObject(BPatch_object* object, const litecfi::Parser& parser,
     }
   }
 
+  std::vector<BPatch_function*> attemptCFPIFuncs;
   for (auto it = modules.begin(); it != modules.end(); it++) {
     char modname[2048];
     BPatch_module* module = *it;
     module->getName(modname, 2048);
 
-    InstrumentModule(module, parser, patcher, analyses, res);
+    InstrumentModule(module, parser, patcher, analyses, res, attemptCFPIFuncs);
+  }
+
+  if (FLAGS_shadow_stack != "light") return;
+  
+  std::sort(attemptCFPIFuncs.begin(), attemptCFPIFuncs.end(),
+    [](BPatch_function* const & a, BPatch_function* const & b) {
+      return ((Address)(a->getBaseAddr())) < ((Address)(b->getBaseAddr()));
+    });
+  std::set<Address> addrs;
+  for (auto bf : attemptCFPIFuncs) {
+    addrs.insert((Address)(bf->getBaseAddr()));
+  }
+  int count = 0;
+  for (auto bf : attemptCFPIFuncs) {
+    count ++;
+    //if (count < 65 || count > 86) continue;
+    ControlFlowPathInlining(bf, analyses, parser, patcher, addrs);
   }
 }
 
@@ -642,7 +662,7 @@ void Instrument(std::string binary, const litecfi::Parser& parser) {
                      << func_with_indirect_or_plt_call
                      << Endl;
   StdOut(Color::RED) << "Functions with indirect call: "
-                     << func_with_indirect_call 
+                     << func_with_indirect_call
                      << Endl;
   StdOut(Color::RED) << "Functions with plt calls : " << func_with_plt_call
                      << Endl;
