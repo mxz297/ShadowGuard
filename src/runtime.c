@@ -29,9 +29,11 @@ static const long long __stack_sz = 8 * 1024 * 1024;  // 8 MB
 //           ---------
 //           |  RA1  | First stack entry
 //           ---------
-//           |  0x0  | Guard Word [16 bytes](To catch underflows)
+//           |  0x0  | Guard Word [8 bytes](To catch underflows)
+//           --------
+//           |  0x0  | Scrach space for register2
 //           ---------
-//           |  0x0  | Sratch space for register frame
+//           |  0x0  | Sratch space for register1 and register frame
 //           ---------
 // gs:0x0 -> |  SP   | Stack Pointer
 //           ---------

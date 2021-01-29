@@ -26,15 +26,13 @@ static std::map<std::string, Gp> kRegisterMap = {
 struct TempRegisters {
   Gp tmp1;
   Gp tmp2;
-  Gp tmp3;
   bool tmp1_saved;
   bool tmp2_saved;
-  bool tmp3_saved;
   int sp_offset;
 
   TempRegisters(std::set<std::string> exclude = {}, int height = 0)
-      : tmp1_saved(true), tmp2_saved(true), tmp3_saved(true),
-        sp_offset(height /* flag saving always takes 8 bytes */) {
+      : tmp1_saved(true), tmp2_saved(true),
+        sp_offset(height) {
     int count = 0;
     for (auto it : kRegisterMap) {
       auto rit = exclude.find(it.first);
@@ -45,9 +43,6 @@ struct TempRegisters {
           break;
         case 1:
           tmp2 = it.second;
-          break;
-        case 2:
-          tmp3 = it.second;
           break;
         }
         count++;
@@ -73,31 +68,32 @@ struct TempRegisters {
       if (it->first == mid->reg1) ++it;
       tmp2 = it->second;
     }
-    tmp3_saved = true;
   }
 };
 
+inline void Save(Assembler* a, Gp* reg, int index) {
+  asmjit::x86::Mem scratch;
+  scratch.setSize(8);
+  scratch.setSegment(gs);
+  scratch = scratch.cloneAdjusted(index * 8);
+  a->mov(scratch, *reg);
+}
+
 void SaveOrSkip(Assembler* a, TempRegisters* t, std::string reg_str, Gp* reg,
-                bool* saved) {
+                bool* saved, int index) {
   auto it = kRegisterMap.find(reg_str);
   if (it != kRegisterMap.end()) {
     *reg = it->second;
     *saved = false;
   } else {
-    a->push(*reg);
-    t->sp_offset += 8;
+    Save(a, reg, index);
   }
-}
-
-inline void Save(Assembler* a, TempRegisters* t, Gp* reg) {
-  a->push(*reg);
-  t->sp_offset += 8;
 }
 
 TempRegisters UseSpecifiedRegisters(Assembler *a, MoveInstData* mid, int height = 0) {
     TempRegisters t(mid, height);
-    if (t.tmp1_saved) Save(a, &t, &t.tmp1);
-    if (t.tmp2_saved) Save(a, &t, &t.tmp2);
+    if (t.tmp1_saved) Save(a, &t.tmp1, 1);
+    if (t.tmp2_saved) Save(a, &t.tmp2, 2);
     return t;
 }
 
@@ -107,57 +103,46 @@ TempRegisters SaveTempRegisters(Assembler* a,
                                 int height = 0) {
   TempRegisters t(exclude, height);
   if ((FLAGS_optimize_regs && dead_registers.empty()) || !FLAGS_optimize_regs) {
-    Save(a, &t, &t.tmp1);
-    Save(a, &t, &t.tmp2);
-    // Save(a, &t, &t.tmp3);
+    Save(a, &t.tmp1, 1);
+    Save(a, &t.tmp2, 2);
   } else {
     auto reg = dead_registers.begin();
     if (reg++ != dead_registers.end()) {
-      SaveOrSkip(a, &t, *reg, &t.tmp1, &t.tmp1_saved);
+      SaveOrSkip(a, &t, *reg, &t.tmp1, &t.tmp1_saved, 1);
     } else {
-      Save(a, &t, &t.tmp1);
+      Save(a, &t.tmp1, 1);
     }
 
     if (reg++ != dead_registers.end()) {
-      SaveOrSkip(a, &t, *reg, &t.tmp2, &t.tmp2_saved);
+      SaveOrSkip(a, &t, *reg, &t.tmp2, &t.tmp2_saved, 2);
     } else {
-      Save(a, &t, &t.tmp2);
-    }
-
-    if (reg++ != dead_registers.end()) {
-      SaveOrSkip(a, &t, *reg, &t.tmp3, &t.tmp3_saved);
-    } else {
-      Save(a, &t, &t.tmp3);
+      Save(a, &t.tmp2, 2);
     }
   }
 
   return t;
 }
 
-void RestoreTempRegisters(Assembler* a, TempRegisters t) {
-  if (t.tmp3_saved) {
-    // a->pop(t.tmp3);
-  }
+inline void Restore(Assembler* a, Gp* reg, int index) {
+  asmjit::x86::Mem scratch;
+  scratch.setSize(8);
+  scratch.setSegment(gs);
+  scratch = scratch.cloneAdjusted(index * 8);
+  a->mov(*reg, scratch);
+}
 
+void RestoreTempRegisters(Assembler* a, TempRegisters t) {
   if (t.tmp2_saved) {
-    a->pop(t.tmp2);
+    Restore(a, &t.tmp2, 2);
   }
 
   if (t.tmp1_saved) {
-    a->pop(t.tmp1);
+    Restore(a, &t.tmp2, 1);
   }
 }
 
 void SaveRa(const asmjit::x86::Mem& shadow_ptr, const Gp& sp_reg,
             const Gp& ra_reg, const TempRegisters& t, Assembler* a) {
-  // Assembly:
-  //
-  //   pushfq
-  //   mov 0x16(%rsp),%rcx
-  //   mov %gs:0x0, %rax
-  //   addq $0x8, %gs:0x0
-  //   mov %rcx, (%rax)
-  //   popfq
   a->mov(ra_reg, ptr(rsp, t.sp_offset));
   a->mov(sp_reg, shadow_ptr);
   a->mov(ptr(sp_reg), ra_reg);
@@ -177,6 +162,7 @@ void SaveRaAndFrame(const asmjit::x86::Mem& shadow_ptr, const Gp& sp_reg,
   //   leaq rcx, 0x10(%rsp)
   //   mov %rcx, 0x8(%rax)
   //   popfq
+  //   TODO: need to save flags to shadow region
   a->pushfq();
   a->mov(ra_reg, ptr(rsp, t.sp_offset));
   a->mov(sp_reg, shadow_ptr);

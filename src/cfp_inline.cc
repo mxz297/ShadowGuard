@@ -234,6 +234,7 @@ static void InstrumentNonInlinedEdges(
   PatchBlock* callft_block,
   PatchFunction* f
 ) {
+/*
   std::set<PatchBlock*> inlinedBlockSet;
   inlinedBlockSet.insert(callft_block);
   for (auto it : cloneBlockMap) {
@@ -273,6 +274,7 @@ static void InstrumentNonInlinedEdges(
       p->pushBack(stack_push);
     }
   }
+*/
 }
 
 static bool FilterCallBlock(PatchBlock* b) {

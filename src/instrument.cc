@@ -575,7 +575,7 @@ void InstrumentCodeObject(BPatch_object* object, const litecfi::Parser& parser,
   for (auto bf : attemptCFPIFuncs) {
     count ++;
     //if (count < 65 || count > 86) continue;
-    ControlFlowPathInlining(bf, analyses, parser, patcher, addrs);
+    //ControlFlowPathInlining(bf, analyses, parser, patcher, addrs);
   }
 }
 
