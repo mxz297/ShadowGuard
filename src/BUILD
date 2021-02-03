@@ -22,7 +22,8 @@ cc_binary(
     "snippet.h",
     "snippet.cc",
     "cfp_inline.cc",
-    "safe_path_elision.cc"
+    "safe_path_elision.cc",
+    "inline_function_call.cc"
     ],
     deps = [
        	"@asmjit//:asmjit",

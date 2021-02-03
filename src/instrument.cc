@@ -44,7 +44,6 @@ DECLARE_string(skip_list);
 
 DECLARE_bool(disable_reg_frame);
 DECLARE_bool(disable_reg_save_opt);
-DECLARE_bool(disable_inline);
 DECLARE_bool(disable_sfe);
 
 // Implemented in safe_path_elision.cc
@@ -65,6 +64,13 @@ bool ControlFlowPathInlining(BPatch_function* function, const std::map<uint64_t,
                              PatchMgr::Ptr patcher,
                              std::set<Address>&);
 
+
+// Implemented in inline_function_call.cc
+extern
+void ReadFunctionInliningFile();
+
+extern
+bool InlineFunctionCalls(BPatch_function*, const litecfi::Parser&);
 // Thread local shadow stack initialization function name.
 static constexpr char kShadowStackInitFn[] = "litecfi_init_mem_region";
 // Init function which needs to be instrumented with a call the thread local
@@ -161,16 +167,6 @@ bool DoStackOpsUsingRegisters(BPatch_function* function, FuncSummary* summary,
     return true;
   }
   return false;
-}
-
-
-
-void AddInlineHint(BPatch_function* function, const litecfi::Parser& parser, FuncSummary * summary) {
-  if (FLAGS_disable_inline) return;
-  // Do no attempt to inline functions that we do not need to instrument
-  if (summary != nullptr && summary->safe) return;
-  Address entry = (Address)(function->getBaseAddr());
-  parser.parser->addInliningEntry(entry);
 }
 
 bool Skippable(BPatch_function* function, FuncSummary* summary) {
@@ -314,8 +310,9 @@ bool InstrumentFunction(BPatch_function* function,
       return true;
     }
 
-    // Add inlining hint so that writeFile may inline small leaf functions.
-    AddInlineHint(function, parser, summary);
+    if (InlineFunctionCalls(function, parser)) {
+      return true;
+    }
 
     // If possible check and lower the instrumentation to within non frequently
     // executed unsafe control flow paths.
@@ -605,6 +602,8 @@ void Instrument(std::string binary, const litecfi::Parser& parser) {
     while (infile >> std::hex >> addr)
       skip_addrs.insert(addr);
   }
+
+  ReadFunctionInliningFile();
 
   std::vector<BPatch_object*> objects;
   parser.image->getObjects(objects);
