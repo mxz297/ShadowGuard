@@ -33,7 +33,7 @@ void ReadFunctionInliningFile() {
 bool InlineFunctionCalls(BPatch_function* function, const litecfi::Parser& parser) {
   if (FLAGS_disable_inline) return false;
   PatchFunction* f = PatchAPI::convert(function);
-  bool didInline = false;
+  std::vector<PatchBlock*> callBlocks;
   for (auto b : f->callBlocks()) {
     Address callee = 0;
     for (auto e : b->targets()) {
@@ -43,9 +43,11 @@ bool InlineFunctionCalls(BPatch_function* function, const litecfi::Parser& parse
     } 
     if (callee == 0) continue;
     if (inlinePair.find(std::make_pair(f->addr(), callee)) == inlinePair.end()) continue;
-    assert(PatchModifier::inlineFunction(cfgMaker, f, b));
-    didInline = true;
+    callBlocks.emplace_back(b);
   }
-  return didInline;
+  for (auto b : callBlocks) {
+    assert(PatchModifier::inlineFunction(cfgMaker, f, b));
+  }
+  return !callBlocks.empty();
 }
 
