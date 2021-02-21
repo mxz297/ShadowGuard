@@ -61,6 +61,14 @@ DEFINE_string(
     "   * empty : No instrumentation. Used to measure Dyninst internal overhead\n "
     "   * only-save :  Only save GPR needed for shadow stack\n");
 
+DEFINE_string(
+    liveness_type, "block",
+    "\t Different types of register liveness analysis.\n"
+    "Valid values are\n"
+    "   * block: only find dead registers based the current block.\n"
+    "   * intra: intra-procedural register liveness assuming ABI across function boundary.\n"
+    "   * inter: inter-procedural register liveness\n"
+);
 
 
 static bool ValidateShadowStackFlag(const char* flagname,

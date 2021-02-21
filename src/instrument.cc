@@ -41,6 +41,7 @@ DECLARE_string(shadow_stack);
 DECLARE_string(threat_model);
 DECLARE_string(stats);
 DECLARE_string(skip_list);
+DECLARE_string(liveness_type);
 
 DECLARE_bool(disable_reg_frame);
 DECLARE_bool(disable_reg_save_opt);
@@ -540,8 +541,12 @@ void InstrumentCodeObject(BPatch_object* object, const litecfi::Parser& parser,
         ->AddPass(new UnsafeCallBlockAnalysis())
         ->AddPass(new SafePathsCounting())
         ->AddPass(new DeadRegisterAnalysis())
-        ->AddPass(new UnusedRegisterAnalysis())
-        ->AddPass(new BlockDeadRegisterAnalysis());
+        ->AddPass(new UnusedRegisterAnalysis());
+    if (FLAGS_liveness_type == "block") {    
+      pm->AddPass(new BlockDeadRegisterAnalysis());
+    } else if (FLAGS_liveness_type == "intra") {
+      pm->AddPass(new IntraRegisterLivenessAnalysis());
+    }
     std::set<FuncSummary*> summaries = pm->Run(co);
 
     for (auto f : summaries) {

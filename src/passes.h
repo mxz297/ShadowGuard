@@ -863,4 +863,67 @@ class UnsafeCallBlockAnalysis : public Pass {
   }
 };
 
+class IntraRegisterLivenessAnalysis : public BlockDeadRegisterAnalysis {
+  std::vector<MachRegister> regList;
+ public:
+  IntraRegisterLivenessAnalysis()
+      : BlockDeadRegisterAnalysis() {
+               regList.emplace_back(x86_64::rax);
+               regList.emplace_back(x86_64::rbx);
+               regList.emplace_back(x86_64::rcx);
+               regList.emplace_back(x86_64::rdx);
+               regList.emplace_back(x86_64::rsi);
+               regList.emplace_back(x86_64::rdi);
+               regList.emplace_back(x86_64::rbp);
+               regList.emplace_back(x86_64::r8);
+               regList.emplace_back(x86_64::r9);
+               regList.emplace_back(x86_64::r10);
+               regList.emplace_back(x86_64::r11);
+               regList.emplace_back(x86_64::r12);
+               regList.emplace_back(x86_64::r13);
+               regList.emplace_back(x86_64::r14);
+               regList.emplace_back(x86_64::r15);
+             }
+
+  void CalculateBlockLevelLivenessFromLivenessAnalyzer(
+    Function *f,
+    Block *b,
+    LivenessAnalyzer &la, 
+    std::map<Offset, Instruction>& insns,
+    std::map<Offset, std::set<std::string>>& d
+  ) {    
+    for (auto it = insns.rbegin(); it != insns.rend(); ++it) {      
+      auto& o = it->first;
+      Instruction& i = it->second;
+      ParseAPI::Location loc(f, b, o, i);
+      std::set<std::string> cur;
+      for (auto r : regList) {
+        bool isLive = true;
+        if (la.query(loc, LivenessAnalyzer::Before, r, isLive)) {
+          if (!isLive) {
+            std::string name = NormalizeRegisterName(r.name());
+            cur.insert(name);
+          }
+        }
+      }
+      d[o] = cur;
+    }
+  }
+
+  void RunLocalAnalysis(CodeObject* co, Function* f, FuncSummary* s,
+                        PassResult* result) override {
+    LivenessAnalyzer la(8);
+    
+    for (auto b : f->blocks()) {
+      std::map<Offset, Instruction> insns;
+      b->getInsns(insns);
+      std::map<Offset, std::set<std::string>> deadReg;
+
+      CalculateBlockLevelLivenessFromLivenessAnalyzer(f, b, la, insns, deadReg);
+      CalculateEntryInstPoint(insns, deadReg, s, b->start());
+      CalculateExitInstPoint(insns, deadReg, s, b->start());
+    }
+  }
+};
+
 #endif  // LITECFI_PASSES_H
